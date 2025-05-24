@@ -7,6 +7,8 @@ import com.zm.zmbackend.entities.Car;
 import com.zm.zmbackend.entities.Reservation;
 import com.zm.zmbackend.entities.User;
 import com.zm.zmbackend.services.UserService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -14,7 +16,13 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Collections;
 
 import java.util.List;
 import java.util.Map;
@@ -68,7 +76,7 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest, HttpServletRequest request) {
         try {
             Optional<User> userOpt = userService.getUserByEmail(loginRequest.getEmail());
             if (userOpt.isEmpty() || !userService.verifyPassword(loginRequest.getPassword(), userOpt.get().getPassword())) {
@@ -76,11 +84,23 @@ public class UserController {
             }
 
             User user = userOpt.get();
-            String token = userService.generateToken(user.getId());
+
+            // Create authentication object
+            UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                user.getEmail(), null, Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER")));
+
+            // Set details
+            authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+            // Set authentication in SecurityContext
+            SecurityContextHolder.getContext().setAuthentication(authToken);
+
+            // Store user ID in session
+            request.getSession().setAttribute("currentUserId", user.getId());
 
             LoginResponse response = new LoginResponse(
                 user.getId(),
-                token,
+                null, // No token needed with session auth
                 user.getEmailVerified()
             );
 
@@ -91,7 +111,7 @@ public class UserController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody User user) {
+    public ResponseEntity<?> register(@RequestBody User user, HttpServletRequest request) {
         try {
             // Check if email already exists
             Optional<User> existingUser = userService.getUserByEmail(user.getEmail());
@@ -104,12 +124,22 @@ public class UserController {
 
             User savedUser = userService.createUser(user);
 
-            // Generate token for the new user
-            String token = userService.generateToken(savedUser.getId());
+            // Create authentication object
+            UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                savedUser.getEmail(), null, Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER")));
+
+            // Set details
+            authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+            // Set authentication in SecurityContext
+            SecurityContextHolder.getContext().setAuthentication(authToken);
+
+            // Store user ID in session
+            request.getSession().setAttribute("currentUserId", savedUser.getId());
 
             LoginResponse response = new LoginResponse(
                 savedUser.getId(),
-                token,
+                null, // No token needed with session auth
                 savedUser.getEmailVerified()
             );
 
@@ -122,16 +152,10 @@ public class UserController {
     @PostMapping("/{userId}/verify-email")
     public ResponseEntity<?> verifyEmail(@PathVariable Long userId, 
                                         @RequestBody VerificationRequest request,
-                                        @RequestHeader("Authorization") String authHeader) {
+                                        HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null || !currentUserId.equals(userId)) {
                 return new ResponseEntity<>("Unauthorized", HttpStatus.UNAUTHORIZED);
             }
@@ -178,16 +202,10 @@ public class UserController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<User> getUserById(@PathVariable Long id, @RequestHeader("Authorization") String authHeader) {
+    public ResponseEntity<User> getUserById(@PathVariable Long id, HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null) {
                 return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
             }
@@ -213,16 +231,10 @@ public class UserController {
 
     @PutMapping("/{id}")
     public ResponseEntity<User> updateUser(@PathVariable Long id, @RequestBody User user, 
-                                          @RequestHeader("Authorization") String authHeader) {
+                                          HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null) {
                 return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
             }
@@ -238,16 +250,10 @@ public class UserController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteUser(@PathVariable Long id, @RequestHeader("Authorization") String authHeader) {
+    public ResponseEntity<Void> deleteUser(@PathVariable Long id, HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null) {
                 return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
             }
@@ -292,16 +298,10 @@ public class UserController {
 
     @PostMapping("/reservations")
     public ResponseEntity<?> createReservation(@RequestBody Reservation reservation, 
-                                              @RequestHeader("Authorization") String authHeader) {
+                                              HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null) {
                 return new ResponseEntity<>("Unauthorized", HttpStatus.UNAUTHORIZED);
             }
@@ -321,16 +321,10 @@ public class UserController {
     }
 
     @PostMapping("/reservations/{id}/cancel")
-    public ResponseEntity<?> cancelReservation(@PathVariable Long id, @RequestHeader("Authorization") String authHeader) {
+    public ResponseEntity<?> cancelReservation(@PathVariable Long id, HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null) {
                 return new ResponseEntity<>("Unauthorized", HttpStatus.UNAUTHORIZED);
             }
@@ -347,16 +341,10 @@ public class UserController {
 
     @GetMapping("/{userId}/reservations/upcoming")
     public ResponseEntity<List<Reservation>> getUpcomingReservations(@PathVariable Long userId, 
-                                                                    @RequestHeader("Authorization") String authHeader) {
+                                                                    HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null) {
                 return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
             }
@@ -373,16 +361,10 @@ public class UserController {
 
     @GetMapping("/{userId}/reservations/past")
     public ResponseEntity<List<Reservation>> getPastReservations(@PathVariable Long userId, 
-                                                               @RequestHeader("Authorization") String authHeader) {
+                                                               HttpServletRequest httpRequest) {
         try {
-            // Extract token from Authorization header
-            String token = authHeader;
-            if (authHeader.startsWith("Bearer ")) {
-                token = authHeader.substring(7);
-            }
-
-            // Validate token
-            Long currentUserId = userService.validateToken(token);
+            // Get user ID from session
+            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
             if (currentUserId == null) {
                 return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
             }
@@ -394,6 +376,21 @@ public class UserController {
                 return new ResponseEntity<>(HttpStatus.FORBIDDEN);
             }
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
+        try {
+            // Invalidate the session
+            request.getSession().invalidate();
+
+            // Clear authentication from security context
+            SecurityContextHolder.clearContext();
+
+            return new ResponseEntity<>("Logged out successfully", HttpStatus.OK);
+        } catch (Exception e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 }

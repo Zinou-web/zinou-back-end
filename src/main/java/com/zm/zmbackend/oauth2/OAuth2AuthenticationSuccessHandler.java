@@ -30,16 +30,15 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
         }
 
         UserPrincipal userPrincipal = (UserPrincipal) authentication.getPrincipal();
-        
-        // Generate token for the authenticated user
-        String token = userService.generateToken(userPrincipal.getId());
-        
-        // Build the redirect URL with the token
+
+        // Store user ID in session
+        request.getSession().setAttribute("currentUserId", userPrincipal.getId());
+
+        // Build the redirect URL with the userId
         String redirectUrl = UriComponentsBuilder.fromUriString("http://localhost:3000/oauth2/redirect")
-                .queryParam("token", token)
                 .queryParam("userId", userPrincipal.getId())
                 .build().toUriString();
-        
+
         getRedirectStrategy().sendRedirect(request, response, redirectUrl);
     }
 }

@@ -20,48 +20,45 @@ public class AuthenticationFilter implements HandlerInterceptor {
     public boolean preHandle( HttpServletRequest request,@NotNull
                               HttpServletResponse response,
                               Object handler) throws Exception {
-        // Get the token from the request header
-        String authToken = request.getHeader("Authorization");
-        if (authToken == null || authToken.isEmpty()) {
-            // Check if X-User-ID header is present (for backward compatibility)
+        // Get the user ID from the session
+        Long userId = (Long) request.getSession().getAttribute("currentUserId");
+
+        // If no user ID in session, check for X-User-ID header (for backward compatibility)
+        if (userId == null) {
             String userIdHeader = request.getHeader("X-User-ID");
             if (userIdHeader == null || userIdHeader.isEmpty()) {
                 response.setStatus(HttpStatus.UNAUTHORIZED.value());
                 response.getWriter().write("Authentication required");
                 return false;
             }
-            
+
             // Validate the user ID
             try {
-                Long userId = Long.parseLong(userIdHeader);
+                userId = Long.parseLong(userIdHeader);
                 if (!userService.isAuthenticated(userId)) {
                     response.setStatus(HttpStatus.UNAUTHORIZED.value());
                     response.getWriter().write("Invalid user ID");
                     return false;
                 }
-                
-                // Set the user ID as a request attribute for controllers to use
-                request.setAttribute("currentUserId", userId);
-                return true;
+
+                // Store the user ID in session for future requests
+                request.getSession().setAttribute("currentUserId", userId);
             } catch (NumberFormatException e) {
                 response.setStatus(HttpStatus.BAD_REQUEST.value());
                 response.getWriter().write("Invalid user ID format");
                 return false;
             }
         }
-        
-        // Validate the token
-        if (authToken.startsWith("Bearer ")) {
-            authToken = authToken.substring(7);
-        }
-        
-        Long userId = userService.validateToken(authToken);
-        if (userId == null) {
+
+        // Verify that the user is still authenticated
+        if (!userService.isAuthenticated(userId)) {
+            // If not authenticated, invalidate the session
+            request.getSession().invalidate();
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
-            response.getWriter().write("Invalid or expired token");
+            response.getWriter().write("Authentication required");
             return false;
         }
-        
+
         // Set the user ID as a request attribute for controllers to use
         request.setAttribute("currentUserId", userId);
         return true;
