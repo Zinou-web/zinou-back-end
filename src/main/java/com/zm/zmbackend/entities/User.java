@@ -1,5 +1,6 @@
 package com.zm.zmbackend.entities;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -40,6 +41,7 @@ public class User {
 
     @Size(max = 255)
     @NotNull
+    @JsonProperty("phone")
     @Column(name = "Phone_number", nullable = false)
     private String phoneNumber;
 
@@ -47,6 +49,10 @@ public class User {
     @Lob
     @Column(name = "Address", nullable = false)
     private String address;
+
+    @Lob
+    @Column(name = "Driving_License")
+    private String drivingLicense;
 
     @Size(max = 255)
     @NotNull

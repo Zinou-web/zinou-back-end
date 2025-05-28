@@ -2,11 +2,13 @@ package com.zm.zmbackend.controllers;
 
 import com.zm.zmbackend.entities.Reservation;
 import com.zm.zmbackend.services.ReservationService;
+import com.zm.zmbackend.services.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,10 +17,12 @@ import java.util.Optional;
 public class ReservationController {
 
     private final ReservationService reservationService;
+    private final UserService userService;
 
     @Autowired
-    public ReservationController(ReservationService reservationService) {
+    public ReservationController(ReservationService reservationService, UserService userService) {
         this.reservationService = reservationService;
+        this.userService = userService;
     }
 
     @GetMapping
@@ -77,6 +81,16 @@ public class ReservationController {
     public ResponseEntity<Reservation> updateReservationStatus(@PathVariable Long id, @RequestBody String status) {
         Reservation updatedReservation = reservationService.updateReservationStatus(id, status);
         return new ResponseEntity<>(updatedReservation, HttpStatus.OK);
+    }
+
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<Reservation> cancelReservation(@PathVariable Long id, HttpServletRequest request) {
+        Long userId = (Long) request.getSession().getAttribute("currentUserId");
+        if (userId == null) {
+            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+        }
+        Reservation cancelled = userService.cancelReservation(id, userId);
+        return new ResponseEntity<>(cancelled, HttpStatus.OK);
     }
 
 }
