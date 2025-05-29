@@ -80,4 +80,18 @@ public interface UserService {
     Payment createReservationPayment(Reservation reservation, BigDecimal amount, PaymentMethodType paymentMethod);
     Payment updatePayment(Long id, Payment payment);
     void deletePayment(Long id);
+
+    // Password reset operations
+    /**
+     * Initiate password reset by sending a reset code to user's email
+     */
+    boolean requestPasswordReset(String email);
+    /**
+     * Verify password reset code and update user's password
+     */
+    boolean verifyPasswordReset(String email, String code, String newPassword);
+    /**
+     * Change the current user's password given the old and new passwords
+     */
+    boolean changePassword(Long userId, String currentPassword, String newPassword);
 }

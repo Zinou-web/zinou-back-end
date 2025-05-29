@@ -9,5 +9,10 @@ public class LoginResponse {
     private Long userId;
     private String token;
     private boolean emailVerified;
-    // Phone verification removed as per requirements
+    // User's display name
+    private String name;
+    // User's email address
+    private String email;
+    // URL to the user's profile image
+    private String profileImageUrl;
 }

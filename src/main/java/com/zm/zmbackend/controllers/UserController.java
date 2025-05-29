@@ -4,6 +4,7 @@ import com.zm.zmbackend.dto.LoginRequest;
 import com.zm.zmbackend.dto.LoginResponse;
 import com.zm.zmbackend.dto.VerificationRequest;
 import com.zm.zmbackend.dto.UpdateProfileRequest;
+import com.zm.zmbackend.dto.RegisterRequest;
 import com.zm.zmbackend.entities.Car;
 import com.zm.zmbackend.entities.Reservation;
 import com.zm.zmbackend.entities.User;
@@ -22,12 +23,16 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Collections;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.time.LocalDate;
+import com.zm.zmbackend.dto.AddressDto;
+import com.zm.zmbackend.dto.ImageUploadResponse;
 
 @RestController
 @RequestMapping("/api/users")
@@ -52,10 +57,14 @@ public class UserController {
 
             User user = userOpt.get();
 
+            // Include name, email, and profile image in response
             LoginResponse response = new LoginResponse(
                 user.getId(),
                 token,
-                user.getEmailVerified()
+                user.getEmailVerified(),
+                user.getFirstName() + " " + user.getLastName(),
+                user.getEmail(),
+                user.getPicture()
             );
 
             return new ResponseEntity<>(response, HttpStatus.OK);
@@ -99,10 +108,14 @@ public class UserController {
             // Store user ID in session
             request.getSession().setAttribute("currentUserId", user.getId());
 
+            // Include name, email, and profile image in response
             LoginResponse response = new LoginResponse(
                 user.getId(),
                 null, // No token needed with session auth
-                user.getEmailVerified()
+                user.getEmailVerified(),
+                user.getFirstName() + " " + user.getLastName(),
+                user.getEmail(),
+                user.getPicture()
             );
 
             return new ResponseEntity<>(response, HttpStatus.OK);
@@ -112,18 +125,24 @@ public class UserController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody User user, HttpServletRequest request) {
+    public ResponseEntity<?> register(@RequestBody RegisterRequest req, HttpServletRequest request) {
         try {
             // Check if email already exists
-            Optional<User> existingUser = userService.getUserByEmail(user.getEmail());
+            Optional<User> existingUser = userService.getUserByEmail(req.getEmail());
             if (existingUser.isPresent()) {
                 return new ResponseEntity<>("Email already in use", HttpStatus.CONFLICT);
             }
 
-            // Set email verification status to false
-            user.setEmailVerified(false);
-
-            User savedUser = userService.createUser(user);
+            // Create new User entity from DTO
+            User newUser = new User();
+            newUser.setFirstName(req.getFirstName());
+            newUser.setLastName(req.getLastName());
+            newUser.setEmail(req.getEmail());
+            newUser.setPassword(req.getPassword());
+            newUser.setPhoneNumber(req.getPhone());
+            // Other optional fields (picture, address, birthday) are left null
+            newUser.setEmailVerified(false);
+            User savedUser = userService.createUser(newUser);
 
             // Generate and send email verification code
             userService.generateEmailVerificationCode(savedUser.getId());
@@ -141,16 +160,96 @@ public class UserController {
             // Store user ID in session
             request.getSession().setAttribute("currentUserId", savedUser.getId());
 
+            // Include name, email, and profile image in response
             LoginResponse response = new LoginResponse(
                 savedUser.getId(),
                 null, // No token needed with session auth
-                savedUser.getEmailVerified()
+                savedUser.getEmailVerified(),
+                savedUser.getFirstName() + " " + savedUser.getLastName(),
+                savedUser.getEmail(),
+                savedUser.getPicture()
             );
 
             return new ResponseEntity<>(response, HttpStatus.CREATED);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    // Password reset endpoints
+    @PostMapping("/password-reset/request")
+    public ResponseEntity<?> requestPasswordReset(@RequestParam String email) {
+        try {
+            boolean initiated = userService.requestPasswordReset(email);
+            return ResponseEntity.ok(Map.of("success", initiated));
+        } catch (ResourceNotFoundException e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.NOT_FOUND);
+        } catch (Exception e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    @PostMapping("/password-reset/verify")
+    public ResponseEntity<PasswordResetResponse> verifyPasswordReset(
+            @RequestParam String email,
+            @RequestParam String code,
+            @RequestParam String newPassword) {
+        try {
+            boolean success = userService.verifyPasswordReset(email, code, newPassword);
+            return ResponseEntity.ok(new PasswordResetResponse(success, success ? "Password updated successfully" : "Invalid reset code"));
+        } catch (ResourceNotFoundException e) {
+            return new ResponseEntity<>(null, HttpStatus.NOT_FOUND);
+        } catch (Exception e) {
+            return new ResponseEntity<>(null, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // Get current user profile
+    @GetMapping("/me")
+    public ResponseEntity<User> getCurrentUser(HttpServletRequest request) {
+        Long currentUserId = (Long) request.getSession().getAttribute("currentUserId");
+        if (currentUserId == null) {
+            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+        }
+        Optional<User> userOpt = userService.getUserById(currentUserId);
+        return userOpt.map(user -> new ResponseEntity<>(user, HttpStatus.OK))
+                      .orElseGet(() -> new ResponseEntity<>(HttpStatus.NOT_FOUND));
+    }
+
+    // Change password for current user
+    @PostMapping("/me/change-password")
+    public ResponseEntity<?> changePassword(@RequestParam String currentPassword,
+                                            @RequestParam String newPassword,
+                                            HttpServletRequest request) {
+        Long currentUserId = (Long) request.getSession().getAttribute("currentUserId");
+        if (currentUserId == null) {
+            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+        }
+        boolean success = userService.changePassword(currentUserId, currentPassword, newPassword);
+        if (!success) {
+            return new ResponseEntity<>("Current password is incorrect", HttpStatus.BAD_REQUEST);
+        }
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    // Upload or update user avatar
+    @PostMapping("/me/avatar")
+    public ResponseEntity<ImageUploadResponse> uploadAvatar(@RequestPart("image") MultipartFile image,
+                                                             HttpServletRequest request) {
+        Long currentUserId = (Long) request.getSession().getAttribute("currentUserId");
+        if (currentUserId == null) {
+            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+        }
+        Optional<User> userOpt = userService.getUserById(currentUserId);
+        if (userOpt.isEmpty()) {
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
+        User user = userOpt.get();
+        // In a real application, you'd save the image to cloud/storage and get a URL
+        String imageUrl = "/uploads/" + image.getOriginalFilename();
+        user.setPicture(imageUrl);
+        userService.updateUser(currentUserId, user, currentUserId);
+        return ResponseEntity.ok(new ImageUploadResponse(imageUrl, true, "Avatar updated successfully"));
     }
 
     @PostMapping("/{userId}/verify-email")
@@ -271,6 +370,17 @@ public class UserController {
             }
             if (request.getPhone() != null) {
                 user.setPhoneNumber(request.getPhone());
+            }
+            // Update birthday if provided
+            if (request.getBirthday() != null) {
+                user.setBirthday(LocalDate.parse(request.getBirthday()));
+            }
+            // Update address if provided
+            if (request.getAddress() != null) {
+                AddressDto addr = request.getAddress();
+                String fullAddress = String.join(", ",
+                    addr.getStreet(), addr.getCity(), addr.getState(), addr.getZipCode(), addr.getCountry());
+                user.setAddress(fullAddress);
             }
             User updatedUser = userService.updateUser(id, user, currentUserId);
             return new ResponseEntity<>(updatedUser, HttpStatus.OK);

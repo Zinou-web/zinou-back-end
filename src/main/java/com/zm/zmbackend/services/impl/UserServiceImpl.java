@@ -617,4 +617,54 @@ public class UserServiceImpl implements UserService {
         }
         paymentRepo.deleteById(id);
     }
+
+    // Password reset service methods
+    @Override
+    public boolean requestPasswordReset(String email) {
+        Optional<User> userOpt = userRepo.findByEmail(email);
+        if (userOpt.isEmpty()) {
+            throw new ResourceNotFoundException("User not found with email: " + email);
+        }
+        User user = userOpt.get();
+        String code = generateVerificationCode();
+        user.setEmailVerificationCode(code);
+        userRepo.save(user);
+        // Send reset code to user's email
+        emailService.sendVerificationCode(user.getEmail(), code);
+        return true;
+    }
+
+    @Override
+    public boolean verifyPasswordReset(String email, String code, String newPassword) {
+        Optional<User> userOpt = userRepo.findByEmail(email);
+        if (userOpt.isEmpty()) {
+            throw new ResourceNotFoundException("User not found with email: " + email);
+        }
+        User user = userOpt.get();
+        if (user.getEmailVerificationCode() == null || !user.getEmailVerificationCode().equals(code)) {
+            return false;
+        }
+        // Update password and clear code
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.setEmailVerificationCode(null);
+        userRepo.save(user);
+        return true;
+    }
+
+    @Override
+    public boolean changePassword(Long userId, String currentPassword, String newPassword) {
+        Optional<User> userOpt = userRepo.findById(userId);
+        if (userOpt.isEmpty()) {
+            throw new ResourceNotFoundException("User not found with id: " + userId);
+        }
+        User user = userOpt.get();
+        // Verify current password matches
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            return false;
+        }
+        // Update to new password
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepo.save(user);
+        return true;
+    }
 }
