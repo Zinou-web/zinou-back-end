@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.time.LocalDate;
 import com.zm.zmbackend.dto.AddressDto;
 import com.zm.zmbackend.dto.ImageUploadResponse;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @RestController
 @RequestMapping("/api/users")
@@ -171,6 +172,9 @@ public class UserController {
             );
 
             return new ResponseEntity<>(response, HttpStatus.CREATED);
+        } catch (DataIntegrityViolationException ex) {
+            // Handle duplicate key or constraint violations (e.g., empty or existing email)
+            return new ResponseEntity<>("Email already in use", HttpStatus.CONFLICT);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
