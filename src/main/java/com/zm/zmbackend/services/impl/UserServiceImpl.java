@@ -429,8 +429,13 @@ public class UserServiceImpl implements UserService {
 
         User user = optionalUser.get();
 
-        // Check if the provided code matches the stored code
-        if (user.getEmailVerificationCode() == null || !user.getEmailVerificationCode().equals(verificationCode)) {
+        String storedCode = user.getEmailVerificationCode();
+        String inputCode = verificationCode;
+        // Log codes for debugging
+        System.out.println("[verifyEmail] Stored OTP='" + storedCode + "', Input OTP='" + inputCode + "'");
+
+        // Check if the provided code matches the stored code (trimmed, case-insensitive)
+        if (storedCode == null || inputCode == null || !storedCode.trim().equalsIgnoreCase(inputCode.trim())) {
             return false;
         }
 

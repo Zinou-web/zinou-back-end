@@ -38,8 +38,7 @@ public class User {
     private LocalDate birthday;
 
     @Size(max = 255)
-    @NotNull
-    @Column(name = "Phone_number", nullable = false)
+    @Column(name = "Phone_number", nullable = true)
     private String phoneNumber;
 
     @Lob

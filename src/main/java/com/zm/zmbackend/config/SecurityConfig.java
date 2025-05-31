@@ -87,6 +87,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(authorize -> authorize
                 // Public endpoints
                 .requestMatchers("/api/users/login", "/api/users/register", "/oauth2/**").permitAll()
+                // Allow mobile clients to hit the OAuth2 redirect JSON endpoint
+                .requestMatchers("/api/users/oauth2/**").permitAll()
+                // Allow password reset and email verification endpoints without authentication
+                .requestMatchers("/api/users/password-reset/**", "/api/users/*/verify-email", "/api/users/*/resend-otp").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
 
                 // Car endpoints - only GET operations are allowed for all users
