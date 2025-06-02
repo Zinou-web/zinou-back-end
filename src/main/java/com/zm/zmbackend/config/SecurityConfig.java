@@ -27,6 +27,8 @@ import lombok.*;
 import com.zm.zmbackend.oauth2.CustomOAuth2UserService;
 import com.zm.zmbackend.oauth2.OAuth2AuthenticationSuccessHandler;
 import com.zm.zmbackend.filter.SessionAuthenticationFilter;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.http.HttpStatus;
 
 import javax.sql.DataSource;
 
@@ -95,35 +97,38 @@ public class SecurityConfig {
 
                 // Car endpoints - only GET operations are allowed for all users
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/cars/**").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.HEAD, "/api/cars/**").permitAll()
+                // Allow unauthenticated GET requests to user endpoints for testing
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/users", "/api/users/**").permitAll()
                 // Block POST, PUT, DELETE operations on cars for regular users
                 .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/cars/**").denyAll()
                 .requestMatchers(org.springframework.http.HttpMethod.PUT, "/api/cars/**").denyAll()
                 .requestMatchers(org.springframework.http.HttpMethod.DELETE, "/api/cars/**").denyAll()
 
-                // User endpoints - require authentication and proper authorization
-                .requestMatchers("/api/users/**").hasRole("USER")
+                // User endpoints - require authentication for create, update, delete operations
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/users/**").hasRole("USER")
+                .requestMatchers(org.springframework.http.HttpMethod.PUT, "/api/users/**").hasRole("USER")
+                .requestMatchers(org.springframework.http.HttpMethod.DELETE, "/api/users/**").hasRole("USER")
 
                 // Block admin access to database operations
                 .requestMatchers("/api/admin/**").denyAll()
-                .requestMatchers("/h2-console/**").denyAll()
+                // Permit all access to H2 console
+                .requestMatchers("/h2-console", "/h2-console/**").permitAll()
                 .requestMatchers("/actuator/db-metrics/**").denyAll()
 
                 // All other endpoints require authentication
                 .anyRequest().authenticated()
             )
-            .oauth2Login(oauth2 -> oauth2
-                .userInfoEndpoint(userInfo -> userInfo
-                    .userService(customOAuth2UserService)
-                )
-                .successHandler(oAuth2AuthenticationSuccessHandler)
+            // Disable default HTML-based login flows
+            .formLogin(AbstractHttpConfigurer::disable)
+            .oauth2Login(AbstractHttpConfigurer::disable)
+            // Return 401 for unauthorized requests instead of redirect to login page
+            .exceptionHandling(exceptions -> exceptions
+                .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
             )
             .rememberMe(rememberMe -> rememberMe
                 .tokenRepository(persistentTokenRepository())
                 .tokenValiditySeconds(86400) // 1 day
-            )
-            .formLogin(form -> form
-                .loginPage("/api/users/login")
-                .permitAll()
             )
             .logout(logout -> logout
                 .logoutUrl("/api/users/logout")
@@ -144,7 +149,8 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(Arrays.asList(
             "http://localhost:3000",  // React development server
             "http://localhost:8080",  // Local development server
-            "https://yourdomain.com"  // Production domain (replace with your actual domain)
+            "https://yourdomain.com",  // Production domain (replace with your actual domain)
+            "https://2745-197-201-62-108.ngrok-free.app"  // Ngrok tunnel for Android client
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList(

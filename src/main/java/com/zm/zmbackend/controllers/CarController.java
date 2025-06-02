@@ -18,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,8 +36,13 @@ public class CarController {
 
     @GetMapping
     public ResponseEntity<List<Car>> getAllCars() {
-        List<Car> cars = carService.getAllCars();
-        return new ResponseEntity<>(cars, HttpStatus.OK);
+        try {
+            List<Car> cars = carService.getAllCars();
+            return new ResponseEntity<>(cars, HttpStatus.OK);
+        } catch (Exception e) {
+            // Return empty list if there is any issue retrieving cars
+            return new ResponseEntity<>(Collections.emptyList(), HttpStatus.OK);
+        }
     }
 
     @Operation(summary = "Get all cars with pagination and filtering", 

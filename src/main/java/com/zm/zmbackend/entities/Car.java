@@ -44,7 +44,7 @@ public class Car {
     @NotNull
     @ColumnDefault("'Mint'")
     @Lob
-    @Column(name = "`Condition`", nullable = false)
+    @Column(name = "car_condition", nullable = false)
     private String condition;
 
     @Size(max = 255)
@@ -53,16 +53,16 @@ public class Car {
     private String model;
 
     @ColumnDefault("'0'")
-    @Column(name = "Mileage", columnDefinition = "int UNSIGNED not null")
+    @Column(name = "Mileage", nullable = false)
     private Long mileage;
 
     @NotNull
     @ColumnDefault("'Hatchback'")
     @Lob
-    @Column(name = "Type", nullable = false)
+    @Column(name = "car_type", nullable = false)
     private String type;
 
-    @Column(name = "Year", columnDefinition = "int UNSIGNED not null")
+    @Column(name = "car_year", nullable = false)
     private Long year;
 
     @Size(max = 255)
@@ -83,7 +83,7 @@ public class Car {
     private String fuel;
 
     @ColumnDefault("'4'")
-    @Column(name = "Seating_capacity", columnDefinition = "int UNSIGNED not null")
+    @Column(name = "Seating_capacity", nullable = false)
     private Long seatingCapacity;
 
     @NotNull

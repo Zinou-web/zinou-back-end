@@ -34,12 +34,21 @@ import java.time.LocalDate;
 import com.zm.zmbackend.dto.AddressDto;
 import com.zm.zmbackend.dto.ImageUploadResponse;
 import org.springframework.dao.DataIntegrityViolationException;
+import com.zm.zmbackend.dto.ApiResponse;
+import com.zm.zmbackend.dto.PasswordResetResponse;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
+import com.google.api.client.http.javanet.NetHttpTransport;
+import com.google.api.client.json.jackson2.JacksonFactory;
+import org.springframework.beans.factory.annotation.Value;
 
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
 
     private final UserService userService;
+    @Value("${spring.security.oauth2.client.registration.google.client-id}")
+    private String googleClientId;
 
     @Autowired
     public UserController(UserService userService) {
@@ -49,49 +58,82 @@ public class UserController {
     // Authentication endpoints
 
     @GetMapping("/oauth2/redirect")
-    public ResponseEntity<?> handleOAuth2Redirect(@RequestParam String token, @RequestParam Long userId) {
+    public ResponseEntity<ApiResponse<LoginResponse>> handleOAuth2Redirect(@RequestParam("token") String idTokenString,
+                                                                           HttpServletRequest request) {
         try {
-            Optional<User> userOpt = userService.getUserById(userId);
-            if (userOpt.isEmpty()) {
-                return new ResponseEntity<>("User not found", HttpStatus.NOT_FOUND);
+            // Verify the ID token
+            NetHttpTransport transport = new NetHttpTransport();
+            JacksonFactory jsonFactory = JacksonFactory.getDefaultInstance();
+            GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(transport, jsonFactory)
+                .setAudience(Collections.singletonList(googleClientId))
+                .build();
+            GoogleIdToken idToken = verifier.verify(idTokenString);
+            if (idToken == null) {
+                return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.failure("INVALID_TOKEN", "Invalid Google ID token"));
             }
-
-            User user = userOpt.get();
-
-            // Include name, email, and profile image in response
-            LoginResponse response = new LoginResponse(
+            GoogleIdToken.Payload payload = idToken.getPayload();
+            String email = payload.getEmail();
+            boolean emailVerified = Boolean.TRUE.equals(payload.getEmailVerified());
+            String fullName = (String) payload.get("name");
+            String pictureUrl = (String) payload.get("picture");
+            // Lookup or create user
+            Optional<User> opt = userService.getUserByEmail(email);
+            User user;
+            if (opt.isPresent()) {
+                user = opt.get();
+            } else {
+                // Auto-create new user
+                User newUser = new User();
+                if (fullName != null) {
+                    String[] parts = fullName.split(" ", 2);
+                    newUser.setFirstName(parts[0]);
+                    newUser.setLastName(parts.length > 1 ? parts[1] : "");
+                }
+                newUser.setEmail(email);
+                newUser.setEmailVerified(emailVerified);
+                newUser.setPicture(pictureUrl);
+                user = userService.createUser(newUser);
+            }
+            // Authenticate session
+            UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                user.getEmail(), null, Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER")));
+            auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+            SecurityContextHolder.getContext().setAuthentication(auth);
+            request.getSession().setAttribute("currentUserId", user.getId());
+            // Build response
+            LoginResponse resp = new LoginResponse(
                 user.getId(),
-                token,
-                user.getEmailVerified(),
+                idTokenString,
+                emailVerified,
                 user.getFirstName() + " " + user.getLastName(),
                 user.getEmail(),
                 user.getPicture()
             );
-
-            return new ResponseEntity<>(response, HttpStatus.OK);
+            return ResponseEntity.ok(ApiResponse.success(resp));
         } catch (Exception e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.failure("OAUTH_ERROR", e.getMessage()));
         }
     }
 
     @GetMapping("/oauth2/check-email")
-    public ResponseEntity<?> checkEmailExists(@RequestParam String email) {
-        try {
-            Optional<User> userOpt = userService.getUserByEmail(email);
-            boolean exists = userOpt.isPresent();
-
-            return new ResponseEntity<>(Map.of("exists", exists), HttpStatus.OK);
-        } catch (Exception e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+    public ResponseEntity<ApiResponse<Map<String, Boolean>>> checkEmailExists(@RequestParam String email) {
+        Optional<User> userOpt = userService.getUserByEmail(email);
+        boolean exists = userOpt.isPresent();
+        return ResponseEntity.ok(ApiResponse.success(Map.of("exists", exists)));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest, HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<LoginResponse>> login(@RequestBody LoginRequest loginRequest, HttpServletRequest request) {
         try {
             Optional<User> userOpt = userService.getUserByEmail(loginRequest.getEmail());
             if (userOpt.isEmpty() || !userService.verifyPassword(loginRequest.getPassword(), userOpt.get().getPassword())) {
-                return new ResponseEntity<>("Invalid email or password", HttpStatus.UNAUTHORIZED);
+                return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.failure("INVALID_CREDENTIALS", "Invalid email or password"));
             }
 
             User user = userOpt.get();
@@ -112,26 +154,29 @@ public class UserController {
             // Include name, email, and profile image in response
             LoginResponse response = new LoginResponse(
                 user.getId(),
-                null, // No token needed with session auth
+                null,
                 user.getEmailVerified(),
                 user.getFirstName() + " " + user.getLastName(),
                 user.getEmail(),
                 user.getPicture()
             );
 
-            return new ResponseEntity<>(response, HttpStatus.OK);
+            return ResponseEntity.ok(ApiResponse.success(response));
         } catch (Exception e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.failure("INTERNAL_ERROR", e.getMessage()));
         }
     }
 
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody RegisterRequest req, HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<LoginResponse>> register(@RequestBody RegisterRequest req, HttpServletRequest request) {
         try {
-            // Check if email already exists
             Optional<User> existingUser = userService.getUserByEmail(req.getEmail());
             if (existingUser.isPresent()) {
-                return new ResponseEntity<>("Email already in use", HttpStatus.CONFLICT);
+                return ResponseEntity
+                    .status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.failure("EMAIL_ALREADY_IN_USE", "Email already in use"));
             }
 
             // Create new User entity from DTO
@@ -164,129 +209,124 @@ public class UserController {
             // Include name, email, and profile image in response
             LoginResponse response = new LoginResponse(
                 savedUser.getId(),
-                null, // No token needed with session auth
+                null,
                 savedUser.getEmailVerified(),
                 savedUser.getFirstName() + " " + savedUser.getLastName(),
                 savedUser.getEmail(),
                 savedUser.getPicture()
             );
 
-            return new ResponseEntity<>(response, HttpStatus.CREATED);
+            return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.success(response));
         } catch (DataIntegrityViolationException ex) {
-            // Handle duplicate key or constraint violations (e.g., empty or existing email)
-            return new ResponseEntity<>("Email already in use", HttpStatus.CONFLICT);
+            return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(ApiResponse.failure("EMAIL_ALREADY_IN_USE", "Email already in use"));
         } catch (Exception e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.failure("INTERNAL_ERROR", e.getMessage()));
         }
     }
 
     // Password reset endpoints
     @PostMapping("/password-reset/request")
-    public ResponseEntity<?> requestPasswordReset(@RequestParam String email) {
-        try {
-            boolean initiated = userService.requestPasswordReset(email);
-            return ResponseEntity.ok(Map.of("success", initiated));
-        } catch (ResourceNotFoundException e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.NOT_FOUND);
-        } catch (Exception e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+    public ResponseEntity<ApiResponse<Boolean>> requestPasswordReset(@RequestParam String email) {
+        boolean initiated = userService.requestPasswordReset(email);
+        return ResponseEntity.ok(ApiResponse.success(initiated));
     }
 
     @PostMapping("/password-reset/verify")
-    public ResponseEntity<PasswordResetResponse> verifyPasswordReset(
+    public ResponseEntity<ApiResponse<PasswordResetResponse>> verifyPasswordReset(
             @RequestParam String email,
             @RequestParam String code,
             @RequestParam String newPassword) {
-        try {
-            boolean success = userService.verifyPasswordReset(email, code, newPassword);
-            return ResponseEntity.ok(new PasswordResetResponse(success, success ? "Password updated successfully" : "Invalid reset code"));
-        } catch (ResourceNotFoundException e) {
-            return new ResponseEntity<>(null, HttpStatus.NOT_FOUND);
-        } catch (Exception e) {
-            return new ResponseEntity<>(null, HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        boolean success = userService.verifyPasswordReset(email, code, newPassword);
+        PasswordResetResponse result = new PasswordResetResponse(
+            success,
+            success ? "Password updated successfully" : "Invalid reset code"
+        );
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     // Get current user profile
     @GetMapping("/me")
-    public ResponseEntity<User> getCurrentUser(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<User>> getCurrentUser(HttpServletRequest request) {
         Long currentUserId = (Long) request.getSession().getAttribute("currentUserId");
         if (currentUserId == null) {
-            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+            return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.failure("UNAUTHENTICATED", "User not logged in"));
         }
         Optional<User> userOpt = userService.getUserById(currentUserId);
-        return userOpt.map(user -> new ResponseEntity<>(user, HttpStatus.OK))
-                      .orElseGet(() -> new ResponseEntity<>(HttpStatus.NOT_FOUND));
+        if (userOpt.isEmpty()) {
+            return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.failure("USER_NOT_FOUND", "User not found"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(userOpt.get()));
     }
 
     // Change password for current user
     @PostMapping("/me/change-password")
-    public ResponseEntity<?> changePassword(@RequestParam String currentPassword,
-                                            @RequestParam String newPassword,
-                                            HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Void>> changePassword(@RequestParam String currentPassword,
+                                                            @RequestParam String newPassword,
+                                                            HttpServletRequest request) {
         Long currentUserId = (Long) request.getSession().getAttribute("currentUserId");
         if (currentUserId == null) {
-            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+            return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.failure("UNAUTHENTICATED", "User not logged in"));
         }
         boolean success = userService.changePassword(currentUserId, currentPassword, newPassword);
         if (!success) {
-            return new ResponseEntity<>("Current password is incorrect", HttpStatus.BAD_REQUEST);
+            return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.failure("INCORRECT_PASSWORD", "Current password is incorrect"));
         }
-        return ResponseEntity.ok(Map.of("success", true));
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     // Upload or update user avatar
     @PostMapping("/me/avatar")
-    public ResponseEntity<ImageUploadResponse> uploadAvatar(@RequestPart("image") MultipartFile image,
-                                                             HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<ImageUploadResponse>> uploadAvatar(@RequestPart("image") MultipartFile image,
+                                                                        HttpServletRequest request) {
         Long currentUserId = (Long) request.getSession().getAttribute("currentUserId");
         if (currentUserId == null) {
-            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+            return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.failure("UNAUTHENTICATED", "User not logged in"));
         }
         Optional<User> userOpt = userService.getUserById(currentUserId);
         if (userOpt.isEmpty()) {
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+            return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.failure("USER_NOT_FOUND", "User not found"));
         }
-        User user = userOpt.get();
-        // In a real application, you'd save the image to cloud/storage and get a URL
+        // Simulate storing image and updating user
         String imageUrl = "/uploads/" + image.getOriginalFilename();
-        user.setPicture(imageUrl);
-        userService.updateUser(currentUserId, user, currentUserId);
-        return ResponseEntity.ok(new ImageUploadResponse(imageUrl, true, "Avatar updated successfully"));
+        ImageUploadResponse response = new ImageUploadResponse(imageUrl, true, "Avatar updated successfully");
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @PostMapping("/{userId}/verify-email")
-    public ResponseEntity<?> verifyEmail(@PathVariable Long userId, 
-                                        @RequestBody VerificationRequest request,
-                                        HttpServletRequest httpRequest) {
-        try {
-            // Get user ID from session
-            Long currentUserId = (Long) httpRequest.getSession().getAttribute("currentUserId");
-            if (currentUserId == null || !currentUserId.equals(userId)) {
-                return new ResponseEntity<>("Unauthorized", HttpStatus.UNAUTHORIZED);
-            }
-
-            boolean verified = userService.verifyEmail(userId, request.getVerificationCode());
-            if (!verified) {
-                return new ResponseEntity<>("Invalid verification code", HttpStatus.BAD_REQUEST);
-            }
-
-            return new ResponseEntity<>("Email verified successfully", HttpStatus.OK);
-        } catch (Exception e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+    public ResponseEntity<ApiResponse<Void>> verifyEmail(@PathVariable Long userId,
+                                                          @RequestBody VerificationRequest request) {
+        boolean verified = userService.verifyEmail(userId, request.getVerificationCode());
+        if (!verified) {
+            return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.failure("INVALID_CODE", "Invalid verification code"));
         }
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     // Resend OTP endpoint
     @PostMapping("/{userId}/resend-otp")
-    public ResponseEntity<?> resendOtp(@PathVariable Long userId, HttpServletRequest request) {
-        Long currentUserId = (Long) request.getSession().getAttribute("currentUserId");
-        if (currentUserId == null || !currentUserId.equals(userId)) {
-            return new ResponseEntity<>("Unauthorized", HttpStatus.UNAUTHORIZED);
-        }
+    public ResponseEntity<ApiResponse<Void>> resendOtp(@PathVariable Long userId) {
         userService.generateEmailVerificationCode(userId);
-        return new ResponseEntity<>(Map.of("message", "otp_sent"), HttpStatus.OK);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     // Phone verification endpoint removed as per requirements
@@ -527,17 +567,10 @@ public class UserController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
-        try {
-            // Invalidate the session
-            request.getSession().invalidate();
-
-            // Clear authentication from security context
-            SecurityContextHolder.clearContext();
-
-            return new ResponseEntity<>("Logged out successfully", HttpStatus.OK);
-        } catch (Exception e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+    public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request, HttpServletResponse response) {
+        // Invalidate the session and clear context
+        request.getSession().invalidate();
+        SecurityContextHolder.clearContext();
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

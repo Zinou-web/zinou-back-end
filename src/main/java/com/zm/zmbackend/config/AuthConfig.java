@@ -22,7 +22,14 @@ public class AuthConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authenticationFilter())
                 .addPathPatterns("/api/users/**")
-                .excludePathPatterns("/api/users/login", "/api/users/register");
+                .excludePathPatterns(
+                    "/api/users/login",
+                    "/api/users/register",
+                    "/api/users/oauth2/**",
+                    "/api/users/password-reset/**",
+                    "/api/users/*/verify-email",
+                    "/api/users/*/resend-otp"
+                );
     }
 
     @Bean
